@@ -1,0 +1,6 @@
+{
+  "name": "Urban Air Quality Assistant",
+  "description": "Mobile-first dark environmental intelligence dashboard for urban air quality monitoring, pollutant breakdowns, forecasts, and AI-assisted environmental insights.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
