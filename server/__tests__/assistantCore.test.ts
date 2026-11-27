@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
-import netlifyAssistantHandler from '../../netlify/functions/assistant';
+import netlifyAssistantHandler from '../../netlify/functions/assistant.js';
 import {
   buildGroundedUserPrompt,
   checkRateLimit,
@@ -10,7 +10,7 @@ import {
   sanitizeAiResponse,
   validateAssistantRequest,
   verifyRequestOrigin,
-} from '../assistantCore';
+} from '../assistantCore.js';
 
 function buildValidRequestBody() {
   return {

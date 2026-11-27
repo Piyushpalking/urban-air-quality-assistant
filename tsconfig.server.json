@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "rootDir": ".",
+    "outDir": "dist-server",
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "skipLibCheck": true,
+    "strict": true,
+    "sourceMap": false,
+    "noEmit": false
+  },
+  "include": ["server.ts", "server/**/*.ts"],
+  "exclude": [
+    "server/__tests__",
+    "src",
+    "netlify",
+    "dist",
+    "dist-server",
+    "node_modules"
+  ]
+}

@@ -6,12 +6,13 @@ import {
   buildCorsHeaders,
   handleAssistantRequest,
   verifyRequestOrigin,
-} from './server/assistantCore';
+} from './server/assistantCore.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = Number.parseInt(process.env.PORT || '3000', 10);
+const parsedPort = Number.parseInt(process.env.PORT || '3000', 10);
+const PORT = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 3000;
 
 function getClientIp(req: express.Request): string {
   const forwarded = req.headers['x-forwarded-for'];
@@ -156,7 +157,8 @@ export async function createApp() {
     }
   });
 
-  const isProduction = process.env.NODE_ENV === 'production';
+  const isCompiledServer = path.basename(__dirname) === 'dist-server';
+  const isProduction = process.env.NODE_ENV === 'production' || isCompiledServer;
 
   if (!isProduction) {
     const { createServer: createViteServer } = await import('vite');
@@ -166,7 +168,8 @@ export async function createApp() {
     });
     app.use(vite.middlewares);
   } else {
-    const distDir = path.resolve(__dirname, 'dist');
+    const projectRoot = isCompiledServer ? path.resolve(__dirname, '..') : __dirname;
+    const distDir = path.resolve(projectRoot, 'dist');
     app.use(express.static(distDir));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distDir, 'index.html'));

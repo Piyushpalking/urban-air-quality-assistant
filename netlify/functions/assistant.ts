@@ -2,7 +2,7 @@ import {
   buildCorsHeaders,
   handleAssistantRequest,
   verifyRequestOrigin,
-} from '../../server/assistantCore';
+} from '../../server/assistantCore.js';
 
 const MAX_BODY_BYTES = 32_768;
 
