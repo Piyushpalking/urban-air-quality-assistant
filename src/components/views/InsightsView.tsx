@@ -1,7 +1,20 @@
-import { useState } from 'react';
-import { DEMO_INSIGHTS } from '../../data/demonstrationData';
-import type { InsightCategory } from '../../types/airQuality';
-import { EPA_AQI_BANDS } from '../../utils/aqiHelpers';
+import { useMemo, useState } from 'react';
+import type {
+  AirQualitySnapshot,
+  AqiStandard,
+  InsightCategory,
+} from '../../types/airQuality';
+import {
+  formatModelTimestamp,
+  getAqiBandsForStandard,
+  getStandardLabel,
+} from '../../utils/aqiHelpers';
+import { buildDataDrivenInsights } from '../../utils/insightsGenerator';
+
+interface InsightsViewProps {
+  snapshot: AirQualitySnapshot;
+  aqiStandard: AqiStandard;
+}
 
 const FILTER_OPTIONS: Array<{ id: InsightCategory; label: string }> = [
   { id: 'all', label: 'All Topics' },
@@ -10,13 +23,20 @@ const FILTER_OPTIONS: Array<{ id: InsightCategory; label: string }> = [
   { id: 'planning', label: 'Planning' },
 ];
 
-export function InsightsView() {
+export function InsightsView({ snapshot, aqiStandard }: InsightsViewProps) {
   const [filter, setFilter] = useState<InsightCategory>('all');
+
+  const computedInsights = useMemo(
+    () => buildDataDrivenInsights(snapshot, aqiStandard),
+    [snapshot, aqiStandard]
+  );
 
   const visibleInsights =
     filter === 'all'
-      ? DEMO_INSIGHTS
-      : DEMO_INSIGHTS.filter((item) => item.category === filter);
+      ? computedInsights
+      : computedInsights.filter((item) => item.category === filter);
+
+  const scaleBands = getAqiBandsForStandard(aqiStandard);
 
   return (
     <div className="space-y-8">
@@ -24,10 +44,10 @@ export function InsightsView() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="font-display text-lg font-semibold text-[#F1F5F9]">
-            Environmental Briefings
+            Live Model Insights · {snapshot.location.name}
           </h2>
           <p className="text-xs text-[#8B9BB0]">
-            Educational urban air quality references · Demonstration insights layout
+            Computed directly from Open-Meteo readings ({formatModelTimestamp(snapshot.modelTimeIso, snapshot.timezoneAbbreviation)}) · {getStandardLabel(aqiStandard)}
           </p>
         </div>
 
@@ -57,7 +77,7 @@ export function InsightsView() {
         </div>
       </div>
 
-      {/* Editorial Insight Grid */}
+      {/* Data-Driven Insight Grid */}
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
         {visibleInsights.map((insight) => (
           <article
@@ -70,7 +90,7 @@ export function InsightsView() {
                   {insight.categoryLabel}
                 </span>
                 <span aria-hidden="true">·</span>
-                <span>Reference guide</span>
+                <span>Open-Meteo model</span>
               </div>
 
               <h3 className="mt-2 font-display text-base font-semibold leading-snug text-[#F1F5F9]">
@@ -97,7 +117,7 @@ export function InsightsView() {
         ))}
       </div>
 
-      {/* Accessible US EPA AQI Reference Table */}
+      {/* Active AQI Standard Reference Table (US EPA or European AQI) */}
       <section
         aria-labelledby="aqi-reference-heading"
         className="rounded-2xl border border-[#1E2936] bg-[#111720] p-5 sm:p-6"
@@ -107,10 +127,10 @@ export function InsightsView() {
             id="aqi-reference-heading"
             className="font-display text-base font-semibold text-[#F1F5F9]"
           >
-            US EPA Air Quality Index Reference Scale
+            {getStandardLabel(aqiStandard)} Reference Scale
           </h2>
           <p className="mt-0.5 text-xs text-[#8B9BB0]">
-            Standard health categories pairing numeric bands with explicit text labels for color-blind accessibility
+            Standard health categories pairing numeric bands with explicit text labels · Toggle US AQI / EU AQI above to compare scales
           </p>
         </div>
 
@@ -119,12 +139,12 @@ export function InsightsView() {
             <thead>
               <tr className="border-b border-[#1E2936] text-xs font-medium text-[#8B9BB0]">
                 <th scope="col" className="pb-3 pr-4">Category</th>
-                <th scope="col" className="pb-3 pr-4">AQI Range</th>
+                <th scope="col" className="pb-3 pr-4">Index Range</th>
                 <th scope="col" className="pb-3">General Guidance</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#1E2936]">
-              {EPA_AQI_BANDS.map((band) => (
+              {scaleBands.map((band) => (
                 <tr key={band.category}>
                   <td className="py-3.5 pr-4 font-semibold whitespace-nowrap">
                     <span className={band.textClass}>{band.label}</span>

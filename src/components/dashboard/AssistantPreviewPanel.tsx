@@ -1,15 +1,18 @@
 import { useState, type FormEvent } from 'react';
 import { ArrowUpRight, MessageSquareText, Send } from 'lucide-react';
 import { ASSISTANT_PROMPT_TEMPLATES } from '../../data/demonstrationData';
-import type { AirQualitySnapshot } from '../../types/airQuality';
+import type { AirQualitySnapshot, AqiStandard } from '../../types/airQuality';
+import { getStandardShortLabel } from '../../utils/aqiHelpers';
 
 interface AssistantPreviewPanelProps {
   snapshot: AirQualitySnapshot;
+  aqiStandard: AqiStandard;
   onOpenAssistantWithPrompt: (prompt?: string) => void;
 }
 
 export function AssistantPreviewPanel({
   snapshot,
+  aqiStandard,
   onOpenAssistantWithPrompt,
 }: AssistantPreviewPanelProps) {
   const [draft, setDraft] = useState('');
@@ -25,10 +28,13 @@ export function AssistantPreviewPanel({
     onOpenAssistantWithPrompt(trimmed);
   };
 
+  const activeAqi =
+    aqiStandard === 'european' ? snapshot.europeanAqi : snapshot.usAqi;
+
   return (
     <section
       aria-labelledby="dashboard-assistant-heading"
-      className="flex flex-col justify-between rounded-2xl border border-[#1E2936] bg-[#111720] p-5 sm:p-6"
+      className="flex h-full flex-col justify-between rounded-2xl border border-[#1E2936] bg-[#111720] p-5 sm:p-6"
     >
       <div>
         <div className="flex items-start justify-between gap-3">
@@ -37,13 +43,13 @@ export function AssistantPreviewPanel({
               <MessageSquareText className="h-3.5 w-3.5 text-[#2DD4BF]" aria-hidden="true" />
               <span>AI Environmental Assistant</span>
               <span aria-hidden="true">·</span>
-              <span>Backend pending</span>
+              <span>Server-side Gemini</span>
             </div>
             <h2
               id="dashboard-assistant-heading"
               className="mt-1.5 font-display text-lg font-semibold text-[#F1F5F9]"
             >
-              Ask about {snapshot.district}
+              Ask about {snapshot.location.name}
             </h2>
           </div>
 
@@ -58,10 +64,13 @@ export function AssistantPreviewPanel({
         </div>
 
         <p className="mt-2.5 text-sm leading-relaxed text-[#94A3B8]">
-          Prepared for secure server-side Gemini integration in Stage 2. Prompts attach this district&apos;s air quality context without generating fabricated responses.
+          Get context-aware pollution guidance grounded in {snapshot.location.name}&apos;s Open-Meteo model readings ({getStandardShortLabel(aqiStandard)}{' '}
+          <span className="font-mono text-[#E2E8F0] tabular-nums">
+            {activeAqi ?? '—'}
+          </span>
+          ) and 5-day forecast.
         </p>
 
-        {/* Starter Prompt List */}
         <div className="mt-4 divide-y divide-[#1E2936] border-y border-[#1E2936]">
           {ASSISTANT_PROMPT_TEMPLATES.slice(0, 3).map((template) => (
             <button
@@ -82,7 +91,6 @@ export function AssistantPreviewPanel({
         </div>
       </div>
 
-      {/* Quick Prompt Input */}
       <form onSubmit={handleSubmit} className="mt-5">
         <label htmlFor="dashboard-assistant-input" className="sr-only">
           Draft a question for the AI Assistant

@@ -1,31 +1,65 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type {
+  AqiStandard,
   DailyForecastSlot,
   HourlyForecastSlot,
 } from '../../types/airQuality';
-import { getAqiMeta } from '../../utils/aqiHelpers';
+import {
+  formatPollutantValue,
+  getAqiMeta,
+  getStandardShortLabel,
+} from '../../utils/aqiHelpers';
 
 interface ForecastSectionProps {
   hourlyForecast: HourlyForecastSlot[];
   dailyForecast: DailyForecastSlot[];
+  aqiStandard: AqiStandard;
+  timezoneAbbreviation: string;
 }
 
 export function ForecastSection({
   hourlyForecast,
   dailyForecast,
+  aqiStandard,
+  timezoneAbbreviation,
 }: ForecastSectionProps) {
   const [mode, setMode] = useState<'hourly' | 'daily'>('hourly');
   const [selectedHourId, setSelectedHourId] = useState<string>(
-    hourlyForecast[0]?.id ?? 'h-01'
+    hourlyForecast[0]?.id ?? ''
   );
+
+  useEffect(() => {
+    if (
+      hourlyForecast.length > 0 &&
+      !hourlyForecast.some((slot) => slot.id === selectedHourId)
+    ) {
+      setSelectedHourId(hourlyForecast[0].id);
+    }
+  }, [hourlyForecast, selectedHourId]);
 
   const activeHour =
     hourlyForecast.find((slot) => slot.id === selectedHourId) ??
-    hourlyForecast[0];
+    hourlyForecast[0] ??
+    null;
+
+  const standardShort = getStandardShortLabel(aqiStandard);
+
+  const hourlyValues = hourlyForecast
+    .map((slot) => (aqiStandard === 'european' ? slot.europeanAqi : slot.usAqi))
+    .filter((v): v is number => typeof v === 'number');
 
   const maxHourlyAqi = Math.max(
-    120,
-    ...hourlyForecast.map((slot) => slot.demoAqi)
+    aqiStandard === 'european' ? 80 : 120,
+    ...hourlyValues
+  );
+
+  const dailyMaxCeiling = Math.max(
+    aqiStandard === 'european' ? 100 : 160,
+    ...dailyForecast
+      .map((day) =>
+        aqiStandard === 'european' ? day.europeanMaxAqi : day.usMaxAqi
+      )
+      .filter((v): v is number => typeof v === 'number')
   );
 
   return (
@@ -42,7 +76,7 @@ export function ForecastSection({
             Air Quality Forecast
           </h2>
           <p className="text-xs text-[#8B9BB0]">
-            Demonstration trajectory · Ready for hourly model feeds
+            Open-Meteo model forecast · {standardShort} · Local time ({timezoneAbbreviation})
           </p>
         </div>
 
@@ -62,7 +96,7 @@ export function ForecastSection({
                 : 'text-[#8B9BB0] hover:text-[#E2E8F0]'
             }`}
           >
-            24-Hour Outlook
+            Next 24 Hours
           </button>
           <button
             type="button"
@@ -81,86 +115,143 @@ export function ForecastSection({
       </div>
 
       {mode === 'hourly' ? (
-        <div className="mt-5">
-          {/* Touch-scrollable horizontal bar chart for Android & desktop */}
-          <div
-            role="listbox"
-            aria-label="Hourly sample forecast slots"
-            className="grid grid-cols-6 gap-2 overflow-x-auto pb-2 no-scrollbar min-w-[340px]"
-          >
-            {hourlyForecast.map((slot) => {
-              const meta = getAqiMeta(slot.category);
-              const isSelected = activeHour?.id === slot.id;
-              const barHeight = Math.max(
-                22,
-                Math.round((slot.demoAqi / maxHourlyAqi) * 100)
-              );
-
-              return (
-                <button
-                  key={slot.id}
-                  type="button"
-                  role="option"
-                  aria-selected={isSelected}
-                  onClick={() => setSelectedHourId(slot.id)}
-                  className={`flex min-h-[152px] flex-col items-center justify-end rounded-xl border px-2 py-3 transition-colors duration-150 cursor-pointer ${
-                    isSelected
-                      ? 'border-[#2DD4BF] bg-[#15222E]'
-                      : 'border-[#1E2936] bg-[#0D1219] hover:border-[#2E3F54]'
-                  }`}
-                >
-                  <span className="font-mono text-xs font-semibold text-[#F1F5F9] tabular-nums">
-                    {slot.demoAqi}
-                  </span>
-                  <div className="my-2.5 flex h-20 w-full items-end justify-center">
-                    <div
-                      className={`w-5 rounded-t-md ${meta.barClass} ${
-                        isSelected ? 'opacity-100' : 'opacity-70'
-                      }`}
-                      style={{ height: `${barHeight}%` }}
-                    />
-                  </div>
-                  <span className="font-mono text-[11px] font-medium text-[#CBD5E1] tabular-nums whitespace-nowrap">
-                    {slot.timeLabel}
-                  </span>
-                  <span className="mt-0.5 text-[10px] text-[#8B9BB0] truncate max-w-full">
-                    {slot.dominantPollutant}
-                  </span>
-                </button>
-              );
-            })}
+        hourlyForecast.length === 0 ? (
+          <div className="mt-5 rounded-xl border border-[#1E2936] bg-[#0D1219] p-6 text-center text-sm text-[#94A3B8]">
+            Hourly forecast values are currently unavailable from Open-Meteo for this location.
           </div>
+        ) : (
+          <div className="mt-5">
+            {/* Horizontal touch-scrollable 24-hour forecast strip */}
+            <div
+              role="listbox"
+              aria-label="Next 24 hours forecast"
+              className="flex gap-2 overflow-x-auto pb-2 no-scrollbar"
+            >
+              {hourlyForecast.map((slot) => {
+                const aqi =
+                  aqiStandard === 'european' ? slot.europeanAqi : slot.usAqi;
+                const category =
+                  aqiStandard === 'european'
+                    ? slot.europeanCategory
+                    : slot.usCategory;
+                const meta = getAqiMeta(category, aqiStandard);
+                const isSelected = activeHour?.id === slot.id;
+                const barHeight =
+                  aqi !== null
+                    ? Math.max(16, Math.round((aqi / maxHourlyAqi) * 100))
+                    : 8;
 
-          {activeHour ? (
-            <div className="mt-4 flex flex-col gap-2 border-t border-[#1E2936] pt-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-xs font-medium text-[#CBD5E1]">
-                  {activeHour.periodLabel} ({activeHour.timeLabel}) ·{' '}
-                  <span className={getAqiMeta(activeHour.category).textClass}>
-                    {getAqiMeta(activeHour.category).label}
-                  </span>
-                </p>
-                <p className="mt-0.5 text-xs text-[#94A3B8]">
-                  {activeHour.windDispersion}
-                </p>
-              </div>
-              <div className="flex items-center gap-3 font-mono text-xs text-[#94A3B8] tabular-nums">
-                <span>Dominant: {activeHour.dominantPollutant}</span>
-                <span aria-hidden="true">·</span>
-                <span>Humidity: {activeHour.humidityPercent}%</span>
-              </div>
+                return (
+                  <button
+                    key={slot.id}
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    onClick={() => setSelectedHourId(slot.id)}
+                    className={`flex min-h-[152px] w-[62px] shrink-0 flex-col items-center justify-end rounded-xl border px-1.5 py-3 transition-colors duration-150 cursor-pointer ${
+                      isSelected
+                        ? 'border-[#2DD4BF] bg-[#15222E]'
+                        : 'border-[#1E2936] bg-[#0D1219] hover:border-[#2E3F54]'
+                    }`}
+                  >
+                    <span className="font-mono text-xs font-semibold text-[#F1F5F9] tabular-nums">
+                      {aqi !== null ? aqi : '—'}
+                    </span>
+                    <div className="my-2.5 flex h-20 w-full items-end justify-center">
+                      <div
+                        className={`w-4 rounded-t-md ${meta.barClass} ${
+                          aqi === null
+                            ? 'opacity-30'
+                            : isSelected
+                              ? 'opacity-100'
+                              : 'opacity-70'
+                        }`}
+                        style={{ height: `${barHeight}%` }}
+                      />
+                    </div>
+                    <span className="font-mono text-[11px] font-medium text-[#CBD5E1] tabular-nums whitespace-nowrap">
+                      {slot.timeLabel}
+                    </span>
+                    <span className="mt-0.5 text-[10px] text-[#8B9BB0] truncate max-w-full">
+                      {slot.dominantPollutant ?? '—'}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-          ) : null}
+
+            {activeHour ? (
+              <div className="mt-4 flex flex-col gap-3 border-t border-[#1E2936] pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-xs font-medium text-[#CBD5E1]">
+                    {activeHour.dateLabel} · {activeHour.timeLabel}{' '}
+                    {timezoneAbbreviation} ·{' '}
+                    <span
+                      className={
+                        getAqiMeta(
+                          aqiStandard === 'european'
+                            ? activeHour.europeanCategory
+                            : activeHour.usCategory,
+                          aqiStandard
+                        ).textClass
+                      }
+                    >
+                      {
+                        getAqiMeta(
+                          aqiStandard === 'european'
+                            ? activeHour.europeanCategory
+                            : activeHour.usCategory,
+                          aqiStandard
+                        ).label
+                      }
+                    </span>
+                  </p>
+                  <p className="mt-0.5 font-mono text-xs text-[#94A3B8] tabular-nums">
+                    US AQI: {activeHour.usAqi ?? '—'} · EU AQI:{' '}
+                    {activeHour.europeanAqi ?? '—'}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs text-[#94A3B8] tabular-nums">
+                  <span>PM2.5: {formatPollutantValue(activeHour.pm25)} µg/m³</span>
+                  <span aria-hidden="true">·</span>
+                  <span>NO₂: {formatPollutantValue(activeHour.no2)} µg/m³</span>
+                  <span aria-hidden="true">·</span>
+                  <span>O₃: {formatPollutantValue(activeHour.o3)} µg/m³</span>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        )
+      ) : dailyForecast.length === 0 ? (
+        <div className="mt-5 rounded-xl border border-[#1E2936] bg-[#0D1219] p-6 text-center text-sm text-[#94A3B8]">
+          5-day forecast data is currently unavailable from Open-Meteo for this location.
         </div>
       ) : (
         <div className="mt-5 divide-y divide-[#1E2936]">
           {dailyForecast.map((day) => {
-            const meta = getAqiMeta(day.category);
-            const leftPct = Math.min(75, Math.round((day.demoMinAqi / 160) * 100));
-            const widthPct = Math.max(
-              14,
-              Math.min(100 - leftPct, Math.round(((day.demoMaxAqi - day.demoMinAqi) / 160) * 100))
-            );
+            const minAqi =
+              aqiStandard === 'european' ? day.europeanMinAqi : day.usMinAqi;
+            const maxAqi =
+              aqiStandard === 'european' ? day.europeanMaxAqi : day.usMaxAqi;
+            const category =
+              aqiStandard === 'european'
+                ? day.europeanCategory
+                : day.usCategory;
+            const meta = getAqiMeta(category, aqiStandard);
+
+            const hasRange = minAqi !== null && maxAqi !== null;
+            const leftPct = hasRange
+              ? Math.min(80, Math.round((minAqi / dailyMaxCeiling) * 100))
+              : 0;
+            const widthPct = hasRange
+              ? Math.max(
+                  10,
+                  Math.min(
+                    100 - leftPct,
+                    Math.round(((maxAqi - minAqi) / dailyMaxCeiling) * 100)
+                  )
+                )
+              : 0;
 
             return (
               <div
@@ -175,23 +266,26 @@ export function ForecastSection({
                     <span className="text-xs text-[#8B9BB0]">{day.dateLabel}</span>
                   </div>
                   <p className={`mt-0.5 text-xs font-medium ${meta.textClass}`}>
-                    {meta.shortLabel} · {day.dominantPollutant}
+                    {meta.shortLabel}
+                    {day.dominantPollutant ? ` · ${day.dominantPollutant}` : ''}
                   </p>
                 </div>
 
                 <div className="flex-1 space-y-1.5">
                   <div className="flex items-center gap-3">
-                    <span className="w-7 font-mono text-xs text-[#8B9BB0] tabular-nums">
-                      {day.demoMinAqi}
+                    <span className="w-8 font-mono text-xs text-[#8B9BB0] tabular-nums">
+                      {minAqi !== null ? minAqi : '—'}
                     </span>
                     <div className="relative h-1.5 flex-1 rounded-full bg-[#1E2936]">
-                      <div
-                        className={`absolute top-0 h-full rounded-full ${meta.barClass}`}
-                        style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                      />
+                      {hasRange ? (
+                        <div
+                          className={`absolute top-0 h-full rounded-full ${meta.barClass}`}
+                          style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                        />
+                      ) : null}
                     </div>
                     <span className="w-8 text-right font-mono text-xs font-semibold text-[#F1F5F9] tabular-nums">
-                      {day.demoMaxAqi}
+                      {maxAqi !== null ? maxAqi : '—'}
                     </span>
                   </div>
                   <p className="text-xs text-[#94A3B8]">{day.summary}</p>

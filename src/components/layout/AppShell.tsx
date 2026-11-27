@@ -10,17 +10,30 @@ import {
   Wind,
   X,
 } from 'lucide-react';
-import type { DataViewState, MonitoringZone, NavView } from '../../types/airQuality';
+import type {
+  AqiStandard,
+  CityLocation,
+  NavView,
+} from '../../types/airQuality';
+import {
+  formatCitySubtitle,
+  formatCoordinates,
+  formatLastUpdated,
+  getStandardShortLabel,
+} from '../../utils/aqiHelpers';
+import { CitySearchControl } from './CitySearchControl';
 
 interface AppShellProps {
   activeView: NavView;
   onSelectView: (view: NavView) => void;
-  zones: MonitoringZone[];
-  activeZone: MonitoringZone;
-  onSelectZone: (zoneId: string) => void;
-  viewState: DataViewState;
-  onChangeViewState: (state: DataViewState) => void;
-  onSimulateRefresh: () => void;
+  cities: CityLocation[];
+  activeCity: CityLocation | null;
+  onSelectCity: (city: CityLocation) => void;
+  aqiStandard: AqiStandard;
+  onChangeAqiStandard: (standard: AqiStandard) => void;
+  lastUpdatedIso: string | null;
+  isRefreshing: boolean;
+  onRefresh: () => void;
   children: ReactNode;
 }
 
@@ -43,29 +56,23 @@ const VIEW_TITLES: Record<NavView, string> = {
   insights: 'Insights',
 };
 
-const STATE_OPTIONS: Array<{ id: DataViewState; label: string }> = [
-  { id: 'demo', label: 'Demo Data' },
-  { id: 'loading', label: 'Loading' },
-  { id: 'empty', label: 'Empty' },
-  { id: 'error', label: 'Error' },
-];
-
 export function AppShell({
   activeView,
   onSelectView,
-  zones,
-  activeZone,
-  onSelectZone,
-  viewState,
-  onChangeViewState,
-  onSimulateRefresh,
+  cities,
+  activeCity,
+  onSelectCity,
+  aqiStandard,
+  onChangeAqiStandard,
+  lastUpdatedIso,
+  isRefreshing,
+  onRefresh,
   children,
 }: AppShellProps) {
-  const [zoneSheetOpen, setZoneSheetOpen] = useState(false);
+  const [citySheetOpen, setCitySheetOpen] = useState(false);
 
   return (
     <div className="min-h-screen bg-[#090D12] text-[#F1F5F9] lg:flex">
-      {/* Skip to content link for keyboard and screen reader accessibility */}
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-[#14B8A6] focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-[#041312]"
@@ -109,16 +116,16 @@ export function AppShell({
         </nav>
 
         <div className="border-t border-[#1E2936] px-6 py-4">
-          <p className="text-xs font-medium text-[#CBD5E1]">Stage 1 Layout Preview</p>
+          <p className="text-xs font-medium text-[#CBD5E1]">Open-Meteo Air Quality</p>
           <p className="mt-1 text-xs leading-relaxed text-[#8B9BB0]">
-            Demonstration fixtures only. Live AQI APIs and server-side Gemini responses connect in Stage 2.
+            Atmospheric model-based estimates (CAMS &amp; regional grids). Not sourced from CPCB ground stations.
           </p>
         </div>
       </aside>
 
       {/* Main Column */}
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Mobile Compact Top App Bar (48px height, keeps sticky total <= 15% on Android viewports) */}
+        {/* Compact Top Bar (48px mobile / 64px desktop) */}
         <header className="sticky top-0 z-30 flex h-12 items-center justify-between gap-3 border-b border-[#1E2936] bg-[#090D12]/95 px-4 backdrop-blur-md lg:h-16 lg:px-8">
           <div className="flex min-w-0 items-center gap-2.5">
             <Wind className="h-4 w-4 text-[#2DD4BF] shrink-0 lg:hidden" aria-hidden="true" />
@@ -126,127 +133,174 @@ export function AppShell({
               <span className="lg:hidden">Urban Air Quality</span>
               <span className="hidden lg:inline">{VIEW_TITLES[activeView]}</span>
             </span>
-            <span className="hidden text-xs text-[#64748B] lg:inline" aria-hidden="true">
-              /
-            </span>
-            <span className="hidden truncate text-sm text-[#94A3B8] lg:inline">
-              {activeZone.name}
-            </span>
+            {activeCity ? (
+              <>
+                <span className="hidden text-xs text-[#64748B] lg:inline" aria-hidden="true">
+                  /
+                </span>
+                <span className="hidden truncate text-sm text-[#94A3B8] lg:inline">
+                  {activeCity.name}, {activeCity.country}
+                </span>
+              </>
+            ) : null}
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              onClick={() => setZoneSheetOpen(true)}
-              aria-label={`Select monitoring district. Current: ${activeZone.name}`}
-              className="inline-flex min-h-[40px] max-w-[168px] items-center gap-1.5 rounded-lg border border-[#1E2936] bg-[#111720] px-2.5 text-xs font-medium text-[#E2E8F0] transition-colors duration-150 hover:border-[#2E3F54] lg:hidden cursor-pointer"
+              onClick={() => setCitySheetOpen(true)}
+              aria-label={
+                activeCity
+                  ? `Search or switch city. Current: ${activeCity.name}`
+                  : 'Search or select a city'
+              }
+              className="inline-flex min-h-[40px] max-w-[172px] items-center gap-1.5 rounded-lg border border-[#1E2936] bg-[#111720] px-2.5 text-xs font-medium text-[#E2E8F0] transition-colors duration-150 hover:border-[#2E3F54] lg:hidden cursor-pointer"
             >
               <MapPin className="h-3.5 w-3.5 text-[#2DD4BF] shrink-0" aria-hidden="true" />
-              <span className="truncate">{activeZone.district}</span>
+              <span className="truncate">{activeCity?.name ?? 'Select City'}</span>
               <ChevronDown className="h-3.5 w-3.5 text-[#8B9BB0] shrink-0" aria-hidden="true" />
             </button>
 
             <button
               type="button"
-              onClick={onSimulateRefresh}
-              className="hidden lg:inline-flex min-h-[40px] items-center gap-2 rounded-xl border border-[#253344] bg-[#111720] px-4 py-2 text-xs font-medium text-[#E2E8F0] transition-colors duration-150 hover:border-[#384A61] hover:text-white whitespace-nowrap shrink-0 cursor-pointer"
+              onClick={onRefresh}
+              disabled={isRefreshing || !activeCity}
+              className="hidden lg:inline-flex min-h-[40px] items-center gap-2 rounded-xl border border-[#253344] bg-[#111720] px-4 py-2 text-xs font-medium text-[#E2E8F0] transition-colors duration-150 hover:border-[#384A61] hover:text-white disabled:opacity-50 whitespace-nowrap shrink-0 cursor-pointer"
             >
-              <RefreshCw className="h-3.5 w-3.5 text-[#2DD4BF]" aria-hidden="true" />
-              <span>Preview Loading</span>
+              <RefreshCw
+                className={`h-3.5 w-3.5 text-[#2DD4BF] ${isRefreshing ? 'animate-spin' : ''}`}
+                aria-hidden="true"
+              />
+              <span>{isRefreshing ? 'Updating...' : 'Refresh Data'}</span>
             </button>
           </div>
         </header>
 
-        {/* Scrollable Viewport Content */}
+        {/* Main Viewport Content */}
         <main
           id="main-content"
           className="mx-auto w-full max-w-6xl flex-1 px-4 pb-24 pt-5 sm:px-6 lg:px-8 lg:pb-12 lg:pt-7"
         >
-          {/* Workspace Context & State Preview Toolbar */}
-          <div className="mb-6 flex flex-col gap-4 border-b border-[#1E2936] pb-5 md:flex-row md:items-end md:justify-between">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#8B9BB0]">
-                <span>Demonstration Mode</span>
-                <span aria-hidden="true">·</span>
-                <span>Static sample fixtures (not live sensor data)</span>
+          {/* Workspace Context, City Search & AQI Standard Toolbar */}
+          <div className="mb-6 flex flex-col gap-4 border-b border-[#1E2936] pb-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#8B9BB0]">
+                  <span>Model-based data · Open-Meteo</span>
+                  <span aria-hidden="true">·</span>
+                  <span>Standard: {getStandardShortLabel(aqiStandard)}</span>
+                  <span aria-hidden="true">·</span>
+                  <span className="font-mono tabular-nums">
+                    Updated: {formatLastUpdated(lastUpdatedIso)}
+                  </span>
+                </div>
+                <h1 className="mt-1.5 font-display text-2xl font-bold tracking-tight text-[#F1F5F9] sm:text-[28px]">
+                  {activeView === 'dashboard'
+                    ? (activeCity?.name ?? 'Select a City')
+                    : VIEW_TITLES[activeView]}
+                </h1>
+                {activeCity ? (
+                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#94A3B8]">
+                    <span>{formatCitySubtitle(activeCity)}</span>
+                    <span aria-hidden="true">·</span>
+                    <span className="font-mono tabular-nums">
+                      {formatCoordinates(activeCity.latitude, activeCity.longitude)}
+                    </span>
+                  </div>
+                ) : null}
               </div>
-              <h1 className="mt-1.5 font-display text-2xl font-bold tracking-tight text-[#F1F5F9] sm:text-[28px]">
-                {activeView === 'dashboard'
-                  ? activeZone.name
-                  : VIEW_TITLES[activeView]}
-              </h1>
-              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#94A3B8]">
-                <span>{activeZone.district}</span>
-                <span aria-hidden="true">·</span>
-                <span>{activeZone.regionLabel}</span>
-                <span aria-hidden="true">·</span>
-                <span className="font-mono tabular-nums">{activeZone.coordinatesLabel}</span>
+
+              <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
+                {/* Desktop City Search (Open-Meteo Geocoding) */}
+                <div className="w-full sm:w-64">
+                  <CitySearchControl
+                    onSelectCity={onSelectCity}
+                    placeholder="Search city (Open-Meteo)..."
+                    compact
+                  />
+                </div>
+
+                {/* AQI Standard Switcher (US AQI | EU AQI) */}
+                <div
+                  role="group"
+                  aria-label="Select AQI standard"
+                  className="inline-flex self-start rounded-xl border border-[#1E2936] bg-[#0D1219] p-1 shrink-0"
+                >
+                  <button
+                    type="button"
+                    onClick={() => onChangeAqiStandard('us')}
+                    aria-pressed={aqiStandard === 'us'}
+                    className={`min-h-[36px] rounded-lg px-3 py-1.5 text-xs font-medium transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer ${
+                      aqiStandard === 'us'
+                        ? 'bg-[#1A2634] text-[#F1F5F9]'
+                        : 'text-[#8B9BB0] hover:text-[#E2E8F0]'
+                    }`}
+                  >
+                    US AQI
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onChangeAqiStandard('european')}
+                    aria-pressed={aqiStandard === 'european'}
+                    className={`min-h-[36px] rounded-lg px-3 py-1.5 text-xs font-medium transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer ${
+                      aqiStandard === 'european'
+                        ? 'bg-[#1A2634] text-[#F1F5F9]'
+                        : 'text-[#8B9BB0] hover:text-[#E2E8F0]'
+                    }`}
+                  >
+                    EU AQI
+                  </button>
+                </div>
+
+                {/* Mobile Inline Refresh Trigger */}
+                <button
+                  type="button"
+                  onClick={onRefresh}
+                  disabled={isRefreshing || !activeCity}
+                  aria-label="Refresh air quality data"
+                  className="inline-flex min-h-[40px] items-center justify-center gap-2 rounded-xl border border-[#253344] bg-[#111720] px-3.5 text-xs font-medium text-[#E2E8F0] transition-colors hover:border-[#384A61] disabled:opacity-50 lg:hidden cursor-pointer"
+                >
+                  <RefreshCw
+                    className={`h-3.5 w-3.5 text-[#2DD4BF] ${isRefreshing ? 'animate-spin' : ''}`}
+                    aria-hidden="true"
+                  />
+                  <span>{isRefreshing ? 'Updating...' : 'Refresh'}</span>
+                </button>
               </div>
             </div>
 
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              {/* Desktop District Selector */}
-              <div className="hidden lg:flex items-center gap-2">
-                <label htmlFor="desktop-zone-select" className="sr-only">
-                  Sample monitoring district
-                </label>
-                <div className="relative">
-                  <MapPin
-                    className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#2DD4BF]"
-                    aria-hidden="true"
-                  />
-                  <select
-                    id="desktop-zone-select"
-                    value={activeZone.id}
-                    onChange={(event) => onSelectZone(event.target.value)}
-                    className="min-h-[40px] appearance-none rounded-xl border border-[#253344] bg-[#111720] pl-9 pr-9 text-xs font-medium text-[#E2E8F0] transition-colors hover:border-[#384A61] cursor-pointer"
+            {/* Quick Tracked Cities Strip (Horizontal Scroll on Mobile, Clean Row on Desktop) */}
+            <div
+              role="region"
+              aria-label="Tracked cities"
+              className="flex items-center gap-2 overflow-x-auto no-scrollbar pt-0.5"
+            >
+              {cities.map((city) => {
+                const isSelected = activeCity?.id === city.id;
+                return (
+                  <button
+                    key={city.id}
+                    type="button"
+                    onClick={() => onSelectCity(city)}
+                    aria-pressed={isSelected}
+                    className={`min-h-[36px] rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer ${
+                      isSelected
+                        ? 'border-[#2DD4BF]/70 bg-[#15222E] text-[#2DD4BF]'
+                        : 'border-[#1E2936] bg-[#0D1219] text-[#94A3B8] hover:border-[#2E3F54] hover:text-[#E2E8F0]'
+                    }`}
                   >
-                    {zones.map((zone) => (
-                      <option key={zone.id} value={zone.id} className="bg-[#111720] text-[#F1F5F9]">
-                        {zone.name} (Sample)
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown
-                    className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#8B9BB0]"
-                    aria-hidden="true"
-                  />
-                </div>
-              </div>
-
-              {/* Interactive UI State Segmented Control (Demo / Loading / Empty / Error) */}
-              <div
-                role="group"
-                aria-label="Preview interface state"
-                className="flex items-center gap-1 overflow-x-auto no-scrollbar rounded-xl border border-[#1E2936] bg-[#0D1219] p-1"
-              >
-                {STATE_OPTIONS.map((option) => {
-                  const selected = viewState === option.id;
-                  return (
-                    <button
-                      key={option.id}
-                      type="button"
-                      onClick={() => onChangeViewState(option.id)}
-                      aria-pressed={selected}
-                      className={`min-h-[36px] rounded-lg px-3 py-1.5 text-xs font-medium transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer ${
-                        selected
-                          ? 'bg-[#1A2634] text-[#F1F5F9]'
-                          : 'text-[#8B9BB0] hover:text-[#E2E8F0]'
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  );
-                })}
-              </div>
+                    {city.name}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
           {children}
 
           <footer className="mt-10 border-t border-[#1E2936] pt-5 text-xs text-[#8B9BB0] flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-            <span>Urban Air Quality Assistant · Frontend Architecture (Stage 1)</span>
-            <span>All displayed metrics are clearly labeled demonstration fixtures.</span>
+            <span>Urban Air Quality Assistant · Open-Meteo Air Quality &amp; Geocoding APIs</span>
+            <span>Atmospheric model-based estimates · Not physical CPCB monitoring stations</span>
           </footer>
         </main>
       </div>
@@ -280,66 +334,74 @@ export function AppShell({
         </div>
       </nav>
 
-      {/* Mobile Bottom Sheet for Sample District Selection */}
-      {zoneSheetOpen ? (
+      {/* Mobile Bottom Sheet for City Search & Quick Selection */}
+      {citySheetOpen ? (
         <div
           role="dialog"
           aria-modal="true"
-          aria-labelledby="district-sheet-title"
+          aria-labelledby="city-sheet-title"
           className="fixed inset-0 z-50 flex items-end justify-center bg-black/65 backdrop-blur-sm lg:hidden"
-          onClick={() => setZoneSheetOpen(false)}
+          onClick={() => setCitySheetOpen(false)}
         >
           <div
-            className="w-full max-w-lg rounded-t-3xl border-t border-[#253344] bg-[#111720] px-5 pb-6 pt-3 pb-safe"
+            className="w-full max-w-lg rounded-t-3xl border-t border-[#253344] bg-[#111720] px-5 pb-6 pt-3 pb-safe max-h-[85vh] overflow-y-auto"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-[#2E3F54]" aria-hidden="true" />
             <div className="flex items-center justify-between gap-4 pb-3 border-b border-[#1E2936]">
               <div>
-                <h2 id="district-sheet-title" className="text-base font-semibold text-[#F1F5F9]">
-                  Select Sample District
+                <h2 id="city-sheet-title" className="text-base font-semibold text-[#F1F5F9]">
+                  Select or Search City
                 </h2>
                 <p className="text-xs text-[#8B9BB0]">
-                  Demonstration locations for layout preview
+                  Powered by Open-Meteo Geocoding API
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => setZoneSheetOpen(false)}
-                aria-label="Close district selector"
+                onClick={() => setCitySheetOpen(false)}
+                aria-label="Close city selector"
                 className="flex h-11 w-11 items-center justify-center rounded-xl text-[#94A3B8] hover:bg-[#1A2634] hover:text-white cursor-pointer"
               >
                 <X className="h-5 w-5" aria-hidden="true" />
               </button>
             </div>
 
-            <div className="mt-3 divide-y divide-[#1E2936]">
-              {zones.map((zone) => {
-                const isSelected = zone.id === activeZone.id;
+            <div className="mt-4">
+              <CitySearchControl
+                onSelectCity={(city) => {
+                  onSelectCity(city);
+                  setCitySheetOpen(false);
+                }}
+                placeholder="Search any city worldwide..."
+              />
+            </div>
+
+            <p className="mt-5 text-xs font-medium text-[#8B9BB0]">Tracked Cities</p>
+            <div className="mt-2 divide-y divide-[#1E2936]">
+              {cities.map((city) => {
+                const isSelected = activeCity?.id === city.id;
                 return (
                   <button
-                    key={zone.id}
+                    key={city.id}
                     type="button"
                     onClick={() => {
-                      onSelectZone(zone.id);
-                      setZoneSheetOpen(false);
+                      onSelectCity(city);
+                      setCitySheetOpen(false);
                     }}
                     className={`flex min-h-[56px] w-full items-center justify-between gap-4 py-3 text-left transition-colors cursor-pointer ${
                       isSelected ? 'text-[#2DD4BF]' : 'text-[#F1F5F9] hover:text-[#2DD4BF]'
                     }`}
                   >
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold">{zone.name}</p>
+                      <p className="truncate text-sm font-semibold">{city.name}</p>
                       <p className="truncate text-xs text-[#8B9BB0]">
-                        {zone.district} · {zone.environmentType}
+                        {formatCitySubtitle(city)}
                       </p>
                     </div>
-                    <div className="text-right shrink-0">
-                      <p className="font-mono text-sm font-semibold tabular-nums">
-                        {zone.demoAqi}
-                      </p>
-                      <p className="text-[11px] text-[#8B9BB0]">Sample AQI</p>
-                    </div>
+                    <span className="font-mono text-xs text-[#8B9BB0] tabular-nums shrink-0">
+                      {formatCoordinates(city.latitude, city.longitude)}
+                    </span>
                   </button>
                 );
               })}

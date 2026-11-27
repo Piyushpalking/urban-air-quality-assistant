@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   EmptyStatePanel,
   ErrorStatePanel,
@@ -10,149 +10,270 @@ import { DashboardView } from './components/views/DashboardView';
 import { InsightsView } from './components/views/InsightsView';
 import { PollutionMapView } from './components/views/PollutionMapView';
 import {
-  getAirQualitySnapshot,
-  getMonitoringZones,
-  STAGE_2_ENDPOINTS,
+  AirQualityServiceError,
+  DEFAULT_CITIES,
+  fetchAirQualityForLocation,
+  fetchCityMapPoints,
 } from './services/airQualityService';
-import type { DataViewState, NavView } from './types/airQuality';
+import type {
+  AirQualitySnapshot,
+  AqiStandard,
+  CityLocation,
+  CityMapPoint,
+  NavView,
+} from './types/airQuality';
 
 export default function App() {
-  const zones = useMemo(() => getMonitoringZones(), []);
   const [activeView, setActiveView] = useState<NavView>('dashboard');
-  const [activeZoneId, setActiveZoneId] = useState<string>(zones[0].id);
-  const [viewState, setViewState] = useState<DataViewState>('demo');
+  const [aqiStandard, setAqiStandard] = useState<AqiStandard>('us');
+  const [trackedCities, setTrackedCities] = useState<CityLocation[]>(DEFAULT_CITIES);
+  const [activeCity, setActiveCity] = useState<CityLocation | null>(DEFAULT_CITIES[0]);
+
+  const [snapshot, setSnapshot] = useState<AirQualitySnapshot | null>(null);
+  const [isLoadingSnapshot, setIsLoadingSnapshot] = useState<boolean>(true);
+  const [snapshotError, setSnapshotError] = useState<{
+    message: string;
+    code?: string;
+  } | null>(null);
+  const [lastUpdatedIso, setLastUpdatedIso] = useState<string | null>(null);
+  const [refreshNonce, setRefreshNonce] = useState<number>(0);
+
+  // Lazy-loaded batch city comparison state for Pollution Map view
+  const [mapPoints, setMapPoints] = useState<CityMapPoint[]>([]);
+  const [isLoadingMap, setIsLoadingMap] = useState<boolean>(false);
+  const [mapError, setMapError] = useState<string | null>(null);
+  const [mapRefreshNonce, setMapRefreshNonce] = useState<number>(0);
+
   const [pendingPrompt, setPendingPrompt] = useState<string | undefined>(undefined);
-  const timerRef = useRef<number | null>(null);
 
-  const activeZone = useMemo(
-    () => zones.find((zone) => zone.id === activeZoneId) ?? zones[0],
-    [activeZoneId, zones]
-  );
-
-  const snapshot = useMemo(
-    () => getAirQualitySnapshot(activeZone.id),
-    [activeZone.id]
-  );
-
+  // Fetch active city's real Open-Meteo Air Quality snapshot
   useEffect(() => {
+    if (!activeCity) {
+      setSnapshot(null);
+      setIsLoadingSnapshot(false);
+      setSnapshotError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    const forceRefresh = refreshNonce > 0;
+
+    setIsLoadingSnapshot(true);
+    setSnapshotError(null);
+
+    fetchAirQualityForLocation(activeCity, {
+      forceRefresh,
+      signal: controller.signal,
+    })
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        setSnapshot(result);
+        setLastUpdatedIso(result.fetchedAtIso);
+        setSnapshotError(null);
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        if (error instanceof AirQualityServiceError) {
+          if (error.code === 'ABORTED') return;
+          setSnapshotError({ message: error.message, code: error.code });
+        } else {
+          setSnapshotError({
+            message: 'Unable to load air quality data from Open-Meteo.',
+            code: 'UNKNOWN_ERROR',
+          });
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setIsLoadingSnapshot(false);
+        }
+      });
+
     return () => {
-      if (timerRef.current !== null) {
-        window.clearTimeout(timerRef.current);
-      }
+      controller.abort();
     };
+  }, [activeCity, refreshNonce]);
+
+  // Lazy-load real Open-Meteo batch data for tracked cities ONLY when user visits Pollution Map
+  useEffect(() => {
+    if (activeView !== 'map') {
+      return;
+    }
+
+    const controller = new AbortController();
+    const forceRefresh = mapRefreshNonce > 0;
+
+    setIsLoadingMap(true);
+    setMapError(null);
+
+    fetchCityMapPoints(trackedCities, {
+      forceRefresh,
+      signal: controller.signal,
+    })
+      .then((points) => {
+        if (controller.signal.aborted) return;
+        setMapPoints(points);
+        if (points[0]?.fetchedAtIso) {
+          setLastUpdatedIso(points[0].fetchedAtIso);
+        }
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        if (error instanceof AirQualityServiceError && error.code === 'ABORTED') {
+          return;
+        }
+        setMapError(
+          error instanceof Error
+            ? error.message
+            : 'Unable to load tracked city comparisons from Open-Meteo.'
+        );
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setIsLoadingMap(false);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [activeView, trackedCities, mapRefreshNonce]);
+
+  const handleSelectCity = useCallback((city: CityLocation) => {
+    setTrackedCities((prev) => {
+      const exists = prev.some(
+        (item) =>
+          item.id === city.id ||
+          (Math.abs(item.latitude - city.latitude) < 0.01 &&
+            Math.abs(item.longitude - city.longitude) < 0.01)
+      );
+      if (exists) {
+        return prev;
+      }
+      // Keep list concise (max 8 tracked cities) so batch map lookups stay fast
+      return [city, ...prev].slice(0, 8);
+    });
+    setActiveCity(city);
+    setRefreshNonce(0);
   }, []);
 
-  const triggerLoadingPreview = useCallback(() => {
-    if (timerRef.current !== null) {
-      window.clearTimeout(timerRef.current);
+  const handleManualRefresh = useCallback(() => {
+    setRefreshNonce((prev) => prev + 1);
+    if (activeView === 'map') {
+      setMapRefreshNonce((prev) => prev + 1);
     }
-    setViewState('loading');
-    timerRef.current = window.setTimeout(() => {
-      setViewState('demo');
-      timerRef.current = null;
-    }, 650);
-  }, []);
+  }, [activeView]);
 
   const handleOpenAssistantWithPrompt = useCallback((prompt?: string) => {
     if (prompt) {
       setPendingPrompt(prompt);
     }
     setActiveView('assistant');
-    setViewState('demo');
   }, []);
 
   const handleConsumeInitialPrompt = useCallback(() => {
     setPendingPrompt(undefined);
   }, []);
 
-  const handleInspectZoneOnDashboard = useCallback((zoneId: string) => {
-    setActiveZoneId(zoneId);
-    setActiveView('dashboard');
-    setViewState('demo');
-  }, []);
+  const handleInspectCityOnDashboard = useCallback(
+    (city: CityLocation) => {
+      handleSelectCity(city);
+      setActiveView('dashboard');
+    },
+    [handleSelectCity]
+  );
 
   const renderActiveContent = () => {
-    if (viewState === 'loading') {
+    if (activeView === 'map') {
+      return (
+        <PollutionMapView
+          points={mapPoints}
+          activeCityId={activeCity?.id ?? null}
+          aqiStandard={aqiStandard}
+          isLoading={isLoadingMap}
+          error={mapError}
+          onRetry={() => setMapRefreshNonce((prev) => prev + 1)}
+          onSelectCity={handleSelectCity}
+          onInspectCityOnDashboard={handleInspectCityOnDashboard}
+        />
+      );
+    }
+
+    if (!activeCity) {
+      return (
+        <EmptyStatePanel
+          title="No city selected"
+          description="Search for any city using Open-Meteo Geocoding above or select a default city to load model-based air quality metrics."
+          primaryActionLabel="Load Default City"
+          onPrimaryAction={() => setActiveCity(DEFAULT_CITIES[0])}
+        />
+      );
+    }
+
+    if (isLoadingSnapshot && !snapshot) {
       return <ViewLoadingSkeleton view={activeView} />;
     }
 
-    if (viewState === 'empty') {
-      const emptyCopy: Record<
-        NavView,
-        { title: string; description: string }
-      > = {
-        dashboard: {
-          title: 'No live AQI provider connected',
-          description: `Stage 1 does not fabricate live telemetry. Connect a real air quality API at ${STAGE_2_ENDPOINTS.airQuality} in Stage 2, or load the labeled demonstration fixtures to inspect the dashboard layout.`,
-        },
-        map: {
-          title: 'No live monitoring stations configured',
-          description: `Real-time spatial layers and station pins will populate once ${STAGE_2_ENDPOINTS.monitoringZones} is connected in Stage 2. Switch back to the demonstration layout to review map controls.`,
-        },
-        assistant: {
-          title: 'AI Assistant awaiting backend setup',
-          description: `Server-side Gemini integration (${STAGE_2_ENDPOINTS.assistant}) is scheduled for Stage 2. Load the demonstration workspace to preview starter prompts and inspect the request payload structure.`,
-        },
-        insights: {
-          title: 'No personalized district insights yet',
-          description:
-            'Location-specific trends require historical AQI records from a connected data provider. Load the demonstration layout to review reference briefings and the EPA scale guide.',
-        },
-      };
-
-      return (
-        <EmptyStatePanel
-          title={emptyCopy[activeView].title}
-          description={emptyCopy[activeView].description}
-          primaryActionLabel="Load Demonstration Layout"
-          onPrimaryAction={() => setViewState('demo')}
-          secondaryActionLabel="Preview Loading State"
-          onSecondaryAction={triggerLoadingPreview}
-        />
-      );
-    }
-
-    if (viewState === 'error') {
+    if (snapshotError && !snapshot) {
       return (
         <ErrorStatePanel
-          title="Unable to reach environmental data service"
-          description={`Simulated error state for UI verification. In production, this state handles network timeouts, rate limits, or upstream unavailability from ${STAGE_2_ENDPOINTS.airQuality} without crashing the interface.`}
-          errorCode="AQI_PROVIDER_UNREACHABLE_PREVIEW"
-          onRetry={triggerLoadingPreview}
-          onShowDemo={() => setViewState('demo')}
+          title={`Unable to load air quality data for ${activeCity.name}`}
+          description={snapshotError.message}
+          errorCode={snapshotError.code}
+          onRetry={handleManualRefresh}
         />
       );
     }
 
-    switch (activeView) {
-      case 'map':
-        return (
-          <PollutionMapView
-            zones={zones}
-            activeZoneId={activeZone.id}
-            onSelectZone={setActiveZoneId}
-            onInspectZoneOnDashboard={handleInspectZoneOnDashboard}
-          />
-        );
-      case 'assistant':
-        return (
+    if (!snapshot) {
+      return (
+        <EmptyStatePanel
+          title="No air quality snapshot available"
+          description="Open-Meteo returned no readable model snapshot for this location. Try refreshing or selecting another city."
+          primaryActionLabel="Retry Fetch"
+          onPrimaryAction={handleManualRefresh}
+        />
+      );
+    }
+
+    return (
+      <div className="space-y-4">
+        {snapshotError ? (
+          <div
+            role="status"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#EF4444]/35 bg-[#1B1217] px-4 py-3 text-xs text-[#FCA5A5]"
+          >
+            <span>
+              Refresh failed ({snapshotError.message}). Displaying last cached snapshot for {snapshot.location.name}.
+            </span>
+            <button
+              type="button"
+              onClick={handleManualRefresh}
+              className="font-semibold text-[#F1F5F9] underline underline-offset-2 hover:text-[#2DD4BF] cursor-pointer"
+            >
+              Retry
+            </button>
+          </div>
+        ) : null}
+
+        {activeView === 'assistant' ? (
           <AiAssistantView
             snapshot={snapshot}
+            aqiStandard={aqiStandard}
             initialPrompt={pendingPrompt}
             onConsumeInitialPrompt={handleConsumeInitialPrompt}
           />
-        );
-      case 'insights':
-        return <InsightsView />;
-      case 'dashboard':
-      default:
-        return (
+        ) : activeView === 'insights' ? (
+          <InsightsView snapshot={snapshot} aqiStandard={aqiStandard} />
+        ) : (
           <DashboardView
             snapshot={snapshot}
+            aqiStandard={aqiStandard}
             onOpenAssistantWithPrompt={handleOpenAssistantWithPrompt}
           />
-        );
-    }
+        )}
+      </div>
+    );
   };
 
   return (
@@ -162,12 +283,14 @@ export default function App() {
         setActiveView(view);
         window.scrollTo({ top: 0, behavior: 'smooth' });
       }}
-      zones={zones}
-      activeZone={activeZone}
-      onSelectZone={setActiveZoneId}
-      viewState={viewState}
-      onChangeViewState={setViewState}
-      onSimulateRefresh={triggerLoadingPreview}
+      cities={trackedCities}
+      activeCity={activeCity}
+      onSelectCity={handleSelectCity}
+      aqiStandard={aqiStandard}
+      onChangeAqiStandard={setAqiStandard}
+      lastUpdatedIso={lastUpdatedIso}
+      isRefreshing={isLoadingSnapshot || (activeView === 'map' && isLoadingMap)}
+      onRefresh={handleManualRefresh}
     >
       {renderActiveContent()}
     </AppShell>

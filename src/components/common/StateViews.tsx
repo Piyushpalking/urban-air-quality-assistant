@@ -58,7 +58,8 @@ interface ErrorStateProps {
   description: string;
   errorCode?: string;
   onRetry: () => void;
-  onShowDemo?: () => void;
+  secondaryActionLabel?: string;
+  onSecondaryAction?: () => void;
 }
 
 export function ErrorStatePanel({
@@ -66,7 +67,8 @@ export function ErrorStatePanel({
   description,
   errorCode,
   onRetry,
-  onShowDemo,
+  secondaryActionLabel,
+  onSecondaryAction,
 }: ErrorStateProps) {
   return (
     <section
@@ -94,13 +96,13 @@ export function ErrorStatePanel({
             <RefreshCw className="h-4 w-4" aria-hidden="true" />
             <span>Retry Connection</span>
           </button>
-          {onShowDemo ? (
+          {secondaryActionLabel && onSecondaryAction ? (
             <button
               type="button"
-              onClick={onShowDemo}
+              onClick={onSecondaryAction}
               className="inline-flex min-h-[44px] items-center justify-center rounded-xl border border-[#253344] bg-[#0D1219] px-5 py-2.5 text-sm font-medium text-[#E2E8F0] transition-colors duration-150 hover:border-[#384A61] hover:text-white whitespace-nowrap shrink-0 cursor-pointer"
             >
-              Return to Demo Layout
+              {secondaryActionLabel}
             </button>
           ) : null}
         </div>
