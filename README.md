@@ -1,159 +1,279 @@
-# Urban Air Quality Assistant
+🌍 Urban Air Quality Assistant
 
-A mobile-first, dark environmental intelligence web application built with **React**, **TypeScript**, **Tailwind CSS v4**, **Vite**, **Express**, and **Netlify Functions**, integrated with the **Open-Meteo Air Quality API**, **Open-Meteo Geocoding API**, and server-side **Gemini AI (`@google/genai`)**.
+An AI-powered urban air quality monitoring and intelligent health guidance platform.
 
-## Implementation Stages
+""Live Demo" (https://img.shields.io/badge/Live-Demo-brightgreen)" (https://urban-air-quality-assistant-2-846648988581.asia-east1.run.app/)
+""Built with Gemini" (https://img.shields.io/badge/AI-Google%20Gemini-blue)" (https://ai.google.dev/)
+""Data Source" (https://img.shields.io/badge/Data-Open--Meteo-green)" (https://open-meteo.com/)
 
-- **Stage 1 (Frontend Architecture)**: Responsive dark environmental-tech UI, Android-optimized bottom thumb navigation, desktop sidebar workspace, accessible AQI scale displays, and structured loading/empty/error states.
-- **Stage 2A (Real Air Quality Data Integration)**:
-  - Live model-based air quality data from `https://air-quality-api.open-meteo.com/v1/air-quality`.
-  - Global city search powered by `https://geocoding-api.open-meteo.com/v1/search`.
-  - Dual AQI standard switcher (**US EPA AQI** and **European AQI / EAQI**) without redundant network calls.
-  - Full 6-pollutant breakdown (**PM2.5**, **PM10**, **NO₂**, **O₃**, **SO₂**, **CO**) with API units and WHO reference comparisons.
-  - Interactive **Next 24 Hours** hourly forecast and **5-Day Outlook** daily range aggregation.
-  - **Pollution Map** multi-city coordinate projection and comparison table backed by batched Open-Meteo requests.
-  - **Insights** computed deterministically from the active city's live Open-Meteo snapshot.
-- **Stage 2B (Secure Server-Side Gemini AI Backend — Current)**:
-  - Server-side Netlify Function at `netlify/functions/assistant.ts` mapped from `POST /api/assistant` via `netlify.toml`.
-  - Local/full-stack Express development server at `server.ts` exposing the identical `POST /api/assistant` contract using the shared `server/assistantCore.ts` module.
-  - Calls Gemini (`gemini-4-hydrogen`) strictly on the server via `@google/genai`, grounded in the selected city's live Open-Meteo readings, units, AQI standard, timestamp, and 24h/5-day forecasts.
-  - Request validation, per-IP sliding-window rate limiting, timeout handling, safe plain-text rendering, and honest error propagation (zero fake fallback answers).
+🚀 Live Application
 
----
+Live Demo: https://urban-air-quality-assistant-2-846648988581.asia-east1.run.app/
 
-## Architecture Overview
+1. Problem Statement
 
-```text
-├── netlify.toml                      # Build config, functions bundler & /api/assistant redirect
-├── netlify/
-│   └── functions/
-│       └── assistant.ts              # Netlify Function (POST /api/assistant)
-├── server.ts                         # Express + Vite dev/prod server mounting POST /api/assistant
-├── server/
-│   ├── assistantCore.ts              # Shared validation, rate limiting, Gemini SDK call & prompt builder
-│   └── __tests__/
-│       └── assistantCore.test.ts     # Unit tests for validation, rate limits, error paths & Netlify handler
-└── src/
-    ├── components/
-    │   ├── common/
-    │   │   └── StateViews.tsx            # Accessible loading skeletons, empty states & error recovery
-    │   ├── dashboard/
-    │   │   ├── AqiOverviewCard.tsx       # Radial AQI gauge, US/EU standard comparison & timestamps
-    │   │   ├── AssistantPreviewPanel.tsx # Dashboard assistant handoff panel
-    │   │   ├── ForecastSection.tsx       # 24-hour touch-scrollable chart & 5-day min–max outlook
-    │   │   └── PollutantGrid.tsx         # 6 primary pollutant cards + inline WHO/source details
-    │   ├── layout/
-    │   │   ├── AppShell.tsx              # Desktop sidebar + Android bottom tab bar
-    │   │   └── CitySearchControl.tsx     # Debounced Open-Meteo Geocoding city search
-    │   └── views/
-    │       ├── AiAssistantView.tsx       # Live Gemini assistant workspace + sent context inspector
-    │       ├── DashboardView.tsx         # Primary overview workspace
-    │       ├── InsightsView.tsx          # Data-driven insights & active AQI reference table
-    │       └── PollutionMapView.tsx      # Geographic coordinate city comparison map & table
-    ├── data/
-    │   └── demonstrationData.ts          # Starter prompt templates & basemap surface asset URL
-    ├── services/
-    │   ├── airQualityMapper.ts           # Pure Open-Meteo -> domain mapper & missing-value handling
-    │   ├── airQualityService.ts          # Open-Meteo fetch client with timeouts, TTL cache & dedupe
-    │   ├── assistantService.ts           # Frontend POST /api/assistant client with timeout & errors
-    │   └── __tests__/
-    │       └── airQualityMapper.test.ts  # Unit tests for mapping, AQI scales & missing values
-    ├── types/
-    │   └── airQuality.ts                 # Shared TypeScript interfaces & API contracts
-    ├── utils/
-    │   ├── aqiHelpers.ts                 # US EPA & European AQI classifiers, units & formatters
-    │   └── insightsGenerator.ts          # Deterministic insights derived from live Open-Meteo data
-    └── App.tsx                           # Application state orchestration & lazy map loading
-```
+Air pollution is a major urban environmental challenge. People often lack accessible, understandable and actionable information about the quality of the air they breathe.
 
----
+Traditional air quality information can be difficult to interpret, especially when users need to understand pollutant concentrations, forecast changes and precautions for outdoor activities.
 
-## Gemini AI Integration (`POST /api/assistant`)
+Urban Air Quality Assistant addresses this problem by combining air quality data, interactive visualizations and Generative AI to make environmental information easier to understand and act upon.
 
-### Request Flow
-1. The browser (`src/services/assistantService.ts`) sends a `POST /api/assistant` request containing:
-   - User question (validated, max 600 characters)
-   - Selected AQI standard (`"us"` or `"european"`)
-   - Active city name, region, country, latitude, and longitude
-   - Actual Open-Meteo current US/EU AQI, 6 pollutant readings with units & WHO guidelines, model timestamp/timezone, next 24 hours forecast, and 5-day forecast
-2. On Netlify, `netlify.toml` rewrites `/api/assistant` (`status = 200`, `force = true`) to `/.netlify/functions/assistant` (`netlify/functions/assistant.ts`). Locally and in full-stack Node hosting, `server.ts` handles `POST /api/assistant` directly.
-3. Both runtimes delegate to `server/assistantCore.ts`, which:
-   - Enforces `POST`-only requests, 32 KB payload size limit, and strict JSON schema/type/range validation.
-   - Enforces sliding-window per-IP rate limiting (12 requests per 60 seconds, returning `429` with `Retry-After`).
-   - Reads `process.env.GEMINI_API_KEY` exclusively on the server side.
-   - Calls `ai.models.generateContent` (`gemini-4-hydrogen`) with system instructions requiring exact adherence to supplied Open-Meteo numbers/units and explicit distinction between atmospheric model-based estimates and physical ground monitoring stations (e.g. CPCB).
-   - Returns structured JSON `{ answer, model, generatedAtIso, groundedContext }`, or explicit HTTP error statuses (`400`, `405`, `413`, `429`, `502`, `503`, `504`) without ever fabricating fallback AI answers.
+2. Our Solution
 
----
+Urban Air Quality Assistant is an AI-powered platform that helps users monitor urban air quality, understand pollution trends and receive contextual recommendations.
 
-## Security Decisions
+The application combines Open-Meteo Air Quality API data with Google Gemini to provide an interactive and informative experience.
 
-- **Server-Only Secret Boundary**: `GEMINI_API_KEY` is read solely via server-side `process.env.GEMINI_API_KEY` inside `server/assistantCore.ts`. It is never prefixed with `VITE_`, never bundled into `dist/`, never returned to the browser, and never printed to server logs.
-- **No Client-Side SDK Usage**: `@google/genai` is imported exclusively inside `server/assistantCore.ts`. Browser code communicates strictly through `/api/assistant`.
-- **Input Validation & Bounds**: Rejects non-POST methods (`405`), malformed JSON (`400`), oversized request bodies (`413`), empty/over-length prompts (`> 600` chars), invalid AQI standards, and out-of-range coordinates (`lat` outside `-90..90`, `lon` outside `-180..180`).
-- **Rate Limiting & Timeouts**: Per-IP sliding-window rate limiter prevents abuse; server enforces a 25-second timeout on Gemini requests and the browser enforces a 30-second `AbortController` timeout.
-- **Safe Output Rendering**: Gemini text responses are rendered exclusively through React text nodes (`SafeAssistantText` splitting paragraphs and simple list items) with zero `dangerouslySetInnerHTML` or raw HTML injection.
-- **Honest Failure Modes**: Missing keys (`503 GEMINI_NOT_CONFIGURED`), invalid keys (`502 GEMINI_AUTH_ERROR`), quota limits (`429 GEMINI_QUOTA_EXCEEDED`), and network failures are surfaced clearly in the UI with a Retry button—never masked with simulated answers.
+3. Key Features
 
----
+🌫️ Air Quality Dashboard
 
-## Data Sources & Integrity Assumptions
+- Displays current city-level air quality information.
+- Shows US EPA AQI and European AQI.
+- Provides pollutant concentration information.
+- Displays data source and update timestamps.
 
-1. **Open-Meteo Air Quality API** (`https://air-quality-api.open-meteo.com/v1/air-quality`):
-   - Requests `pm2_5`, `pm10`, `nitrogen_dioxide`, `sulphur_dioxide`, `ozone`, `carbon_monoxide`, `european_aqi`, and `us_aqi` (`current` + `hourly`, `forecast_days=5`, `timezone=auto`).
-   - All readings are **atmospheric model-based estimates** (Copernicus CAMS & regional models) and explicitly labeled as such—not physical ground monitoring stations or CPCB sensors.
-2. **Open-Meteo Geocoding API** (`https://geocoding-api.open-meteo.com/v1/search`):
-   - Debounced city search (350ms, minimum 2 characters) with 30-minute caching.
-3. **Missing Pollutant Values**:
-   - Any `null`, `undefined`, `NaN`, or negative values remain `null` (never coerced to `0`), render as `Unavailable` / `—`, and are passed transparently to Gemini as `null`.
+🌍 City Search and Switching
 
----
+- Search for supported cities.
+- Switch between different cities.
+- Refresh air quality readings.
 
-## Environment Variables & Deployment
+📊 Pollutant Monitoring
 
-### Local Development
-1. Copy `.env.example` to `.env` (never commit `.env` to Git):
-   ```bash
-   cp .env.example .env
-   ```
-2. Set your server-side Gemini API key in `.env`:
-   ```env
-   GEMINI_API_KEY="your-real-gemini-api-key"
-   ```
-3. Install dependencies and start the full-stack server (Express + Vite on port 3000):
-   ```bash
-   npm install
-   npm run dev
-   ```
+Tracks the following pollutants:
 
-### Netlify Deployment
-1. Push the repository to GitHub (ensure `.env` is ignored via `.gitignore`).
-2. Connect the repository in **Netlify -> Add new site -> Import an existing project**.
-   - Netlify automatically reads `netlify.toml`:
-     - Build command: `npm run build`
-     - Publish directory: `dist`
-     - Functions directory: `netlify/functions` (`esbuild` bundler)
-     - Redirect rule: `/api/assistant` -> `/.netlify/functions/assistant` (`200`, `force = true`)
-3. In **Netlify -> Site configuration -> Environment variables**, add:
-   - Key: `GEMINI_API_KEY`
-   - Value: your Gemini API key (mark as secret / available to **Functions** scope)
-4. Trigger a deploy (or redeploy after adding `GEMINI_API_KEY`).
-5. Verify by opening the deployed site, navigating to **AI Assistant**, and submitting a question—confirm the browser Network tab calls `POST /api/assistant` with no API key headers or query strings.
+- PM2.5
+- PM10
+- Nitrogen Dioxide (NO₂)
+- Sulphur Dioxide (SO₂)
+- Ozone (O₃)
+- Carbon Monoxide (CO)
 
----
+📅 Air Quality Forecasts
 
-## Development & Verification Scripts
+- 24-hour air quality forecast.
+- Five-day air quality forecast.
+- Helps users understand potential changes in pollution levels.
 
-```bash
-# Start full-stack dev server (Express /api/assistant + Vite SPA on port 3000)
+🗺️ Pollution Map
+
+- Interactive map interface.
+- Zoom and drag controls.
+- Available map markers and location information.
+
+🤖 Gemini AI Assistant
+
+- Answers natural-language air quality questions.
+- Uses available city and pollutant context.
+- Provides practical pollution precautions.
+- Offers guidance for the general public and sensitive groups.
+- Explains forecast-based air quality risks.
+
+🔐 Security
+
+- Server-side Gemini API integration.
+- Environment-variable-based API key management.
+- Request validation and origin restrictions.
+- Prompt-injection isolation.
+- AI response sanitization.
+- Error handling and security headers.
+- Rate limiting.
+
+4. Technology Stack
+
+Technology| Purpose
+React| User interface
+TypeScript| Application logic and type safety
+Vite| Frontend development and build
+Node.js| Backend runtime
+Netlify Functions| Serverless assistant endpoint
+Google Gemini| Generative AI
+Open-Meteo| Air quality data
+Google Cloud Run| Production deployment
+GitHub| Source code management
+
+5. Data Source and Methodology
+
+The application uses the Open-Meteo Air Quality API.
+
+Official documentation:
+https://open-meteo.com/en/docs/air-quality-api
+
+The API provides atmospheric model-based air quality estimates and forecast information.
+
+The application displays pollutant concentrations and supports US EPA and European AQI standards.
+
+Important data limitation:
+
+Open-Meteo model-based estimates are not equivalent to physical street-level monitoring station measurements or CPCB ground-sensor readings.
+
+The application does not claim that its readings are direct measurements from CPCB monitoring stations.
+
+Users should consider this distinction when interpreting air quality information.
+
+6. AI Integration
+
+The application integrates Google Gemini to generate contextual air quality guidance.
+
+The AI assistant receives relevant available information, including:
+
+- Selected city.
+- Current AQI standard.
+- Pollutant concentrations.
+- Available forecast information.
+- Data timestamps and units.
+- User questions.
+
+Gemini uses this context to produce understandable explanations and practical recommendations.
+
+AI Security
+
+The Gemini API key is intended to remain on the server and is accessed through the "GEMINI_API_KEY" environment variable.
+
+It must never be exposed in frontend code or committed to the public repository.
+
+7. Application Architecture
+
+User
+  |
+  v
+React + TypeScript Frontend
+  |
+  +--------------------------+
+  |                          |
+  v                          v
+Open-Meteo API          AI Assistant
+  |                          |
+  v                          v
+AQI and Forecast       Backend Endpoint
+  |                          |
+  |                          v
+  |                     Google Gemini
+  |                          |
+  +------------+-------------+
+               |
+               v
+        Dashboard and
+        AI Recommendations
+
+8. Security and Testing
+
+The project underwent a security audit and production startup verification.
+
+Reported verification results:
+
+- 17/17 unit tests passed.
+- TypeScript checks passed.
+- Production build passed.
+- Dependency audit reported zero known vulnerabilities.
+- API key exposure scans reported no frontend secrets.
+- Request origin and content-type validation implemented.
+- Input validation and rate limiting implemented.
+- AI response sanitization implemented.
+- Production server startup verified.
+- Cloud Run deployment successfully tested.
+
+These results reflect the project's reported test and audit runs; security should continue to be monitored after deployment.
+
+9. Environment Variables
+
+The application requires the following server-side secret:
+
+GEMINI_API_KEY=your_gemini_api_key
+
+Never commit actual API keys or secret credentials.
+
+Use environment variables in the appropriate deployment environment.
+
+An ".env.example" file may be used to document required configuration without exposing credentials.
+
+10. Local Development
+
+Prerequisites
+
+- Node.js
+- npm
+- Gemini API key
+
+Installation
+
+git clone https://github.com/Piyushpalking/urban-air-quality-assistant.git
+
+cd urban-air-quality-assistant
+
+npm install
+
+Environment Setup
+
+Create a local ".env" file and configure:
+
+GEMINI_API_KEY=your_gemini_api_key
+
+Keep ".env" out of version control.
+
+Development
+
 npm run dev
 
-# Run TypeScript type check
-npm run lint
+Production Build
 
-# Run frontend mapper + backend assistant & Netlify Function unit tests
+npm run build
+
+Production Start
+
+npm start
+
+Tests
+
 npm test
 
-# Build production frontend bundle
-npm run build
-```
+11. Deployment
+
+The production application is deployed using Google Cloud Run.
+
+Production URL:
+
+https://urban-air-quality-assistant-2-846648988581.asia-east1.run.app/
+
+The production backend must receive its Gemini API key through secure server-side environment configuration.
+
+12. Assumptions and Limitations
+
+1. Air quality readings are based on atmospheric model estimates from Open-Meteo.
+2. Model estimates may differ from local ground-monitoring station measurements.
+3. Forecasts represent estimated future atmospheric conditions and are subject to change.
+4. AI-generated recommendations are informational and are not a substitute for professional medical advice.
+5. Data availability depends on the external API and network connectivity.
+6. AI response quality depends on the accuracy and availability of the supplied context.
+
+13. Future Improvements
+
+Potential future enhancements include:
+
+- More detailed location-level pollution insights.
+- Historical air quality analysis.
+- Personalized pollution alerts.
+- Improved pollution trend visualizations.
+- Additional environmental data sources.
+- More advanced AI-powered recommendations.
+
+14. Project Information
+
+Project: Urban Air Quality Assistant
+
+Category: Environmental Technology / Artificial Intelligence
+
+AI Service: Google Gemini
+
+Air Quality Data: Open-Meteo
+
+Deployment: Google Cloud Run
+
+Challenge: PromptWars Challenge 6
+
+GitHub Repository: https://github.com/Piyushpalking/urban-air-quality-assistant
+
+---
+
+Built to make urban air quality information more accessible, understandable and actionable. 🌍🍃
